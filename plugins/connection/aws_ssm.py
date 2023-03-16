@@ -499,15 +499,27 @@ class Connection(ConnectionBase):
 
         region_name = self.get_option('region')
         profile_name = self.get_option('profile') or ''
-        cmd = [
-            executable,
-            json.dumps(response),
-            region_name,
-            "StartSession",
-            profile_name,
-            json.dumps({"Target": self.instance_id}),
-            self._client.meta.endpoint_url,
-        ]
+
+        if True:
+            cmd = [
+                executable,
+                json.dumps(response),
+                region_name,
+                "StartSession",
+                profile_name,
+                json.dumps({"Target": self.instance_id}),
+                self._client.meta.endpoint_url,
+            ]
+        else:
+            # Dead code but might be handy for debugging someday
+            self._vvvv("DEBUG: Using CLI rather than boto3 API")
+            cmd = [
+                '/usr/local/bin/aws',
+                'ssm',
+                'start-session',
+                '--target',
+                self.instance_id,
+            ]
 
         self._vvvv(f"SSM COMMAND: {to_text(cmd)}")
 
@@ -612,7 +624,7 @@ class Connection(ConnectionBase):
 
         startup_complete = False
         disable_echo_complete = None
-        disable_echo_cmd = to_bytes("stty -echo\n", errors="surrogate_or_strict")
+        disable_echo_cmd = to_bytes("stty -echo\necho stty -echo\n", errors="surrogate_or_strict")
 
         disable_prompt_complete = None
         end_mark = "".join(
@@ -637,11 +649,16 @@ class Connection(ConnectionBase):
                 raise AnsibleConnectionFailure(
                     f"SSM start_session timeout on host: {self.instance_id}"
                 )
-            if self._poll_stdout.poll(1000):
-                stdout += to_text(self._stdout.read(1024))
-                self._vvvv(f"PRE stdout line: \n{to_bytes(stdout)}")
+            
+            if startup_complete:
+                if self._poll_stdout.poll(1000):
+                    stdout += to_text(self._stdout.read(1024))
+                    self._vvvv(f"PRE stdout line: \n{to_bytes(stdout)}")
+                else:
+                    self._vvvv(f"PRE remaining: {remaining}")
             else:
-                self._vvvv(f"PRE remaining: {remaining}")
+                # Session start message appears on stderr rather than stderror
+                stdout += self._flush_stderr(self._session)
 
             # wait til prompt is ready
             if startup_complete is False:
@@ -755,7 +772,7 @@ class Connection(ConnectionBase):
                 break
             line = session_process.stderr.readline()
             self._vvvv(f"stderr line: {to_text(line)}")
-            stderr = stderr + line
+            stderr = stderr + to_text(line)
 
         return stderr
 
