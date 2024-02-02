@@ -69,6 +69,17 @@ options:
                     description:
                       - The name of the target group.
                       - Mutually exclusive with I(TargetGroupArn).
+        AlpnPolicy:
+            description:
+              - The name of the Application-Layer Protocol Negotiation (ALPN) policy.
+            type: str
+            choices:
+              - HTTP1Only
+              - HTTP2Only
+              - HTTP2Optional
+              - HTTP2Preferred
+              - None
+            version_added: 7.1.0
   name:
     description:
       - The name of the load balancer. This name must be unique within your AWS account, can have a maximum of 32 characters, must contain only alphanumeric
@@ -183,7 +194,6 @@ EXAMPLES = r"""
   community.aws.elb_network_lb:
     name: myelb
     state: absent
-
 """
 
 RETURN = r"""
@@ -283,6 +293,13 @@ load_balancer:
                             returned: when state is present
                             type: str
                             sample: ""
+                alpn_policy:
+                    description: The name of the Application-Layer Protocol Negotiation (ALPN) policy.
+                    returned: when state is present
+                    type: list
+                    elements: str
+                    version_added: 7.1.0
+                    sample: ["HTTP1Only", "HTTP2Only"]
         load_balancer_arn:
             description: The Amazon Resource Name (ARN) of the load balancer.
             returned: when state is present
@@ -329,11 +346,11 @@ load_balancer:
 
 from ansible.module_utils.common.dict_transformations import camel_dict_to_snake_dict
 
-from ansible_collections.amazon.aws.plugins.module_utils.tagging import boto3_tag_list_to_ansible_dict
-from ansible_collections.amazon.aws.plugins.module_utils.tagging import compare_aws_tags
 from ansible_collections.amazon.aws.plugins.module_utils.elbv2 import ELBListener
 from ansible_collections.amazon.aws.plugins.module_utils.elbv2 import ELBListeners
 from ansible_collections.amazon.aws.plugins.module_utils.elbv2 import NetworkLoadBalancer
+from ansible_collections.amazon.aws.plugins.module_utils.tagging import boto3_tag_list_to_ansible_dict
+from ansible_collections.amazon.aws.plugins.module_utils.tagging import compare_aws_tags
 
 from ansible_collections.community.aws.plugins.module_utils.modules import AnsibleCommunityAWSModule as AnsibleAWSModule
 
@@ -349,10 +366,12 @@ def create_or_update_elb(elb_obj):
 
         # Tags - only need to play with tags if tags parameter has been set to something
         if elb_obj.tags is not None:
-
             # Delete necessary tags
-            tags_need_modify, tags_to_delete = compare_aws_tags(boto3_tag_list_to_ansible_dict(elb_obj.elb['tags']),
-                                                                boto3_tag_list_to_ansible_dict(elb_obj.tags), elb_obj.purge_tags)
+            tags_need_modify, tags_to_delete = compare_aws_tags(
+                boto3_tag_list_to_ansible_dict(elb_obj.elb["tags"]),
+                boto3_tag_list_to_ansible_dict(elb_obj.tags),
+                elb_obj.purge_tags,
+            )
             if tags_to_delete:
                 elb_obj.delete_tags(tags_to_delete)
 
@@ -369,25 +388,29 @@ def create_or_update_elb(elb_obj):
     elb_obj.modify_elb_attributes()
 
     # Listeners
-    listeners_obj = ELBListeners(elb_obj.connection, elb_obj.module, elb_obj.elb['LoadBalancerArn'])
+    listeners_obj = ELBListeners(elb_obj.connection, elb_obj.module, elb_obj.elb["LoadBalancerArn"])
 
     listeners_to_add, listeners_to_modify, listeners_to_delete = listeners_obj.compare_listeners()
 
     # Delete listeners
     for listener_to_delete in listeners_to_delete:
-        listener_obj = ELBListener(elb_obj.connection, elb_obj.module, listener_to_delete, elb_obj.elb['LoadBalancerArn'])
+        listener_obj = ELBListener(
+            elb_obj.connection, elb_obj.module, listener_to_delete, elb_obj.elb["LoadBalancerArn"]
+        )
         listener_obj.delete()
         listeners_obj.changed = True
 
     # Add listeners
     for listener_to_add in listeners_to_add:
-        listener_obj = ELBListener(elb_obj.connection, elb_obj.module, listener_to_add, elb_obj.elb['LoadBalancerArn'])
+        listener_obj = ELBListener(elb_obj.connection, elb_obj.module, listener_to_add, elb_obj.elb["LoadBalancerArn"])
         listener_obj.add()
         listeners_obj.changed = True
 
     # Modify listeners
     for listener_to_modify in listeners_to_modify:
-        listener_obj = ELBListener(elb_obj.connection, elb_obj.module, listener_to_modify, elb_obj.elb['LoadBalancerArn'])
+        listener_obj = ELBListener(
+            elb_obj.connection, elb_obj.module, listener_to_modify, elb_obj.elb["LoadBalancerArn"]
+        )
         listener_obj.modify()
         listeners_obj.changed = True
 
@@ -396,8 +419,8 @@ def create_or_update_elb(elb_obj):
         elb_obj.changed = True
 
     # Update ELB ip address type only if option has been provided
-    if elb_obj.module.params.get('ip_address_type') is not None:
-        elb_obj.modify_ip_address_type(elb_obj.module.params.get('ip_address_type'))
+    if elb_obj.module.params.get("ip_address_type") is not None:
+        elb_obj.modify_ip_address_type(elb_obj.module.params.get("ip_address_type"))
 
     # Update the objects to pickup changes
     # Get the ELB again
@@ -410,24 +433,20 @@ def create_or_update_elb(elb_obj):
     # Convert to snake_case and merge in everything we want to return to the user
     snaked_elb = camel_dict_to_snake_dict(elb_obj.elb)
     snaked_elb.update(camel_dict_to_snake_dict(elb_obj.elb_attributes))
-    snaked_elb['listeners'] = []
+    snaked_elb["listeners"] = []
     for listener in listeners_obj.current_listeners:
-        snaked_elb['listeners'].append(camel_dict_to_snake_dict(listener))
+        snaked_elb["listeners"].append(camel_dict_to_snake_dict(listener))
 
     # Change tags to ansible friendly dict
-    snaked_elb['tags'] = boto3_tag_list_to_ansible_dict(snaked_elb['tags'])
+    snaked_elb["tags"] = boto3_tag_list_to_ansible_dict(snaked_elb["tags"])
 
     # ip address type
-    snaked_elb['ip_address_type'] = elb_obj.get_elb_ip_address_type()
+    snaked_elb["ip_address_type"] = elb_obj.get_elb_ip_address_type()
 
-    elb_obj.module.exit_json(
-        changed=elb_obj.changed,
-        load_balancer=snaked_elb,
-        **snaked_elb)
+    elb_obj.module.exit_json(changed=elb_obj.changed, load_balancer=snaked_elb, **snaked_elb)
 
 
 def delete_elb(elb_obj):
-
     if elb_obj.elb:
         elb_obj.delete()
 
@@ -435,42 +454,46 @@ def delete_elb(elb_obj):
 
 
 def main():
-
-    argument_spec = (
-        dict(
-            cross_zone_load_balancing=dict(type='bool'),
-            deletion_protection=dict(type='bool'),
-            listeners=dict(type='list',
-                           elements='dict',
-                           options=dict(
-                               Protocol=dict(type='str', required=True),
-                               Port=dict(type='int', required=True),
-                               SslPolicy=dict(type='str'),
-                               Certificates=dict(type='list', elements='dict'),
-                               DefaultActions=dict(type='list', required=True, elements='dict')
-                           )
-                           ),
-            name=dict(required=True, type='str'),
-            purge_listeners=dict(default=True, type='bool'),
-            purge_tags=dict(default=True, type='bool'),
-            subnets=dict(type='list', elements='str'),
-            subnet_mappings=dict(type='list', elements='dict'),
-            scheme=dict(default='internet-facing', choices=['internet-facing', 'internal']),
-            state=dict(choices=['present', 'absent'], type='str', default='present'),
-            tags=dict(type='dict', aliases=['resource_tags']),
-            wait_timeout=dict(type='int'),
-            wait=dict(type='bool'),
-            ip_address_type=dict(type='str', choices=['ipv4', 'dualstack'])
-        )
+    argument_spec = dict(
+        cross_zone_load_balancing=dict(type="bool"),
+        deletion_protection=dict(type="bool"),
+        listeners=dict(
+            type="list",
+            elements="dict",
+            options=dict(
+                Protocol=dict(type="str", required=True),
+                Port=dict(type="int", required=True),
+                SslPolicy=dict(type="str"),
+                Certificates=dict(type="list", elements="dict"),
+                DefaultActions=dict(type="list", required=True, elements="dict"),
+                AlpnPolicy=dict(
+                    type="str",
+                    choices=["HTTP1Only", "HTTP2Only", "HTTP2Optional", "HTTP2Preferred", "None"],
+                ),
+            ),
+        ),
+        name=dict(required=True, type="str"),
+        purge_listeners=dict(default=True, type="bool"),
+        purge_tags=dict(default=True, type="bool"),
+        subnets=dict(type="list", elements="str"),
+        subnet_mappings=dict(type="list", elements="dict"),
+        scheme=dict(default="internet-facing", choices=["internet-facing", "internal"]),
+        state=dict(choices=["present", "absent"], type="str", default="present"),
+        tags=dict(type="dict", aliases=["resource_tags"]),
+        wait_timeout=dict(type="int"),
+        wait=dict(type="bool"),
+        ip_address_type=dict(type="str", choices=["ipv4", "dualstack"]),
     )
 
     required_if = [
-        ('state', 'present', ('subnets', 'subnet_mappings',), True)
+        ["state", "present", ["subnets", "subnet_mappings"], True],
     ]
 
-    module = AnsibleAWSModule(argument_spec=argument_spec,
-                              required_if=required_if,
-                              mutually_exclusive=[['subnets', 'subnet_mappings']])
+    module = AnsibleAWSModule(
+        argument_spec=argument_spec,
+        required_if=required_if,
+        mutually_exclusive=[["subnets", "subnet_mappings"]],
+    )
 
     # Check for subnets or subnet_mappings if state is present
     state = module.params.get("state")
@@ -480,20 +503,20 @@ def main():
     if listeners is not None:
         for listener in listeners:
             for key in listener.keys():
-                protocols_list = ['TCP', 'TLS', 'UDP', 'TCP_UDP']
-                if key == 'Protocol' and listener[key] not in protocols_list:
+                protocols_list = ["TCP", "TLS", "UDP", "TCP_UDP"]
+                if key == "Protocol" and listener[key] not in protocols_list:
                     module.fail_json(msg="'Protocol' must be either " + ", ".join(protocols_list))
 
-    connection = module.client('elbv2')
-    connection_ec2 = module.client('ec2')
+    connection = module.client("elbv2")
+    connection_ec2 = module.client("ec2")
 
     elb = NetworkLoadBalancer(connection, connection_ec2, module)
 
-    if state == 'present':
+    if state == "present":
         create_or_update_elb(elb)
     else:
         delete_elb(elb)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

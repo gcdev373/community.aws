@@ -7,6 +7,19 @@
     managed_policy:
     - AmazonEC2ContainerServiceRole
     wait: True
+  register: iam_role_creation
+
+- name: ensure AmazonECSTaskExecutionRolePolicy exists
+  iam_role:
+    name: "{{ ecs_task_role_name }}"
+    assume_role_policy_document: "{{ lookup('file','ecs-trust-policy.json') }}"
+    description: "Allows ECS containers to make calls to ECR"
+    state: present
+    create_instance_profile: false
+    managed_policy:
+      - AmazonECSTaskExecutionRolePolicy
+    wait: True
+  register: iam_execution_role
 
 - name: ensure AWSServiceRoleForECS role exists
   iam_role_info:
@@ -59,7 +72,7 @@
   register: igw
 
 - name: create a security group to use for creating an ec2 instance
-  ec2_group:
+  ec2_security_group:
     name: '{{ resource_prefix }}_ecs_cluster-sg'
     description: 'created by Ansible integration tests'
     state: present
@@ -73,9 +86,9 @@
     # As a lookup plugin we don't have access to module_defaults
     connection_args:
       region: "{{ aws_region }}"
-      aws_access_key: "{{ aws_access_key }}"
-      aws_secret_key: "{{ aws_secret_key }}"
-      aws_security_token: "{{ security_token | default(omit) }}"
+      access_key: "{{ aws_access_key }}"
+      secret_key: "{{ aws_secret_key }}"
+      session_token: "{{ security_token | default(omit) }}"
   no_log: True
 
 - name: set image id fact
